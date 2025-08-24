@@ -6,24 +6,101 @@
   <title>Upload to Google Drive</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #fff; }
-    .card { max-width: 520px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; }
+    .card { max-width: 560px; margin: 0 auto; padding: 20px; border: 1px solid #e5e7eb; border-radius: 12px; }
     h2 { margin: 0 0 12px; }
-    button { padding: 10px 16px; border-radius: 8px; border: 1px solid #d1d5db; cursor: pointer; background: #fff; }
+    button { padding: 10px 16px; border-radius: 8px; border: 1px solid #d1d5db; cursor: pointer; background:#fff; }
     .note { font-size: 12px; color: #666; margin-top: 8px; }
+    #status { margin-top: 10px; }
+    progress { width: 100%; height: 10px; }
   </style>
 </head>
 <body>
   <div class="card">
     <h2>Upload to Google Drive</h2>
-    <form id="uform"
-          action="https://script.google.com/macros/s/AKfycbyFTquXlGHrlbJc75Hv2CtN-_udr0qcpNDjBSbNIxLRvjy6SvegMXREJLcJyBrhBu-J5Q/exec"
-          method="post"
-          enctype="multipart/form-data">
-      <input type="file" name="file" multiple required>
+
+    <form id="userForm">
+      <input id="fileInput" type="file" name="file" multiple required>
       <br><br>
-      <button type="submit">Upload</button>
-      <div class="note">Tip: keep files reasonably small (tens of MB) for reliability.</div>
+      <button id="submitBtn" type="submit">Upload</button>
+      <div class="note">
+        Tip: This route converts files to Base64 before uploading. Keep files modest (&lt;~30–40&nbsp;MB each).
+      </div>
+      <div id="status" aria-live="polite"></div>
+      <div id="progressWrap" style="display:none;margin-top:8px;"><progress id="prog" max="100" value="0"></progress></div>
     </form>
+
+    <!-- This actual POST goes to Apps Script; keeping it separate helps avoid CORS -->
+    <form id="postForm" method="post" enctype="application/x-www-form-urlencoded" target="_self"
+          action="https://script.google.com/macros/s/AKfycbyFTquXlGHrlbJc75Hv2CtN-_udr0qcpNDjBSbNIxLRvjy6SvegMXREJLcJyBrhBu-J5Q/exec"
+          style="display:none"></form>
   </div>
+
+  <script>
+    // If your deployment URL changes, update the form's action here:
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyFTquXlGHrlbJc75Hv2CtN-_udr0qcpNDjBSbNIxLRvjy6SvegMXREJLcJyBrhBu-J5Q/exec";
+
+    const userForm = document.getElementById('userForm');
+    const postForm = document.getElementById('postForm');
+    const fileInput = document.getElementById('fileInput');
+    const statusEl = document.getElementById('status');
+    const progressWrap = document.getElementById('progressWrap');
+    const prog = document.getElementById('prog');
+
+    postForm.action = WEB_APP_URL;
+
+    userForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      statusEl.textContent = 'Reading files…';
+      progressWrap.style.display = 'block';
+      prog.value = 0;
+
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) {
+        statusEl.textContent = 'Please choose at least one file.';
+        return;
+      }
+
+      // Clear any previous hidden inputs
+      postForm.innerHTML = '';
+      addHidden(postForm, 'count', String(files.length));
+
+      // Read each file to base64 (dataURL) and strip the prefix
+      let done = 0;
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const dataUrl = await fileToDataURL(f);
+        const base64 = dataUrl.split(',')[1]; // remove "data:mime/type;base64,"
+
+        addHidden(postForm, 'name' + i, f.name);
+        addHidden(postForm, 'type' + i, f.type || 'application/octet-stream');
+        addHidden(postForm, 'data' + i, base64);
+
+        done++;
+        prog.value = Math.round((done / files.length) * 100);
+      }
+
+      statusEl.textContent = 'Uploading…';
+      postForm.submit(); // normal form POST – no CORS issues
+      // After submission, Apps Script will render a result page.
+      // If you prefer to stay on this page, target a hidden iframe and listen for onload.
+    });
+
+    function addHidden(form, name, value) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      input.value = value;
+      form.appendChild(input);
+    }
+
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+  </script>
 </body>
 </html>
