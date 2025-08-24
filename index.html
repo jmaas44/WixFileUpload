@@ -18,7 +18,8 @@
   <div class="card">
     <h2>Upload to Google Drive</h2>
 
-    <form id="userForm">
+    <!-- UI form (reads files and builds JSON) -->
+    <form id="uiForm">
       <input id="fileInput" type="file" multiple required>
       <br><br>
       <button type="submit">Upload</button>
@@ -29,19 +30,37 @@
     <div id="progressWrap" style="display:none;margin-top:8px;">
       <progress id="prog" max="100" value="0"></progress>
     </div>
+
+    <!-- Real post goes here (hidden) to avoid CORS -->
+    <iframe name="uploadFrame" style="display:none" id="uploadFrame"></iframe>
+    <form id="postForm" method="post" enctype="application/x-www-form-urlencoded"
+          action="https://script.google.com/macros/s/AKfycbxWvlcyl_OEPFq37-2okUxXdquuqF4ujwSdrgQKN5PNiCXhA9v1fMhOCqENINqFyMNDoA/exec"
+          target="uploadFrame" style="display:none">
+      <textarea name="payload" id="payload"></textarea>
+    </form>
   </div>
 
   <script>
-    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxWvlcyl_OEPFq37-2okUxXdquuqF4ujwSdrgQKN5PNiCXhA9v1fMhOCqENINqFyMNDoA/exec"; // replace with your deployed URL
-
-    const userForm = document.getElementById('userForm');
+    const uiForm = document.getElementById('uiForm');
     const fileInput = document.getElementById('fileInput');
     const statusEl = document.getElementById('status');
     const progressWrap = document.getElementById('progressWrap');
     const prog = document.getElementById('prog');
+    const postForm = document.getElementById('postForm');
+    const payloadEl = document.getElementById('payload');
+    const uploadFrame = document.getElementById('uploadFrame');
 
-    userForm.addEventListener('submit', async (e) => {
+    // When the hidden iframe finishes loading, assume server responded OK
+    uploadFrame.addEventListener('load', () => {
+      // Only flip to "complete" if we were actually uploading
+      if (statusEl.textContent.startsWith('Uploading')) {
+        statusEl.innerHTML = '✅ Upload complete!';
+      }
+    });
+
+    uiForm.addEventListener('submit', async (e) => {
       e.preventDefault();
+
       const files = Array.from(fileInput.files || []);
       if (!files.length) { statusEl.textContent = 'Pick at least one file.'; return; }
 
@@ -52,31 +71,29 @@
       const out = { files: [] };
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        const b64 = await toB64(f);
-        out.files.push({ name: f.name, type: f.type, data: b64 });
+        try {
+          const b64 = await toB64(f);
+          out.files.push({ name: f.name, type: f.type || 'application/octet-stream', data: b64 });
+        } catch (err) {
+          statusEl.textContent = 'Error reading file: ' + (f.name || '');
+          return;
+        }
         prog.value = Math.round(((i + 1) / files.length) * 100);
       }
 
+      // Put JSON into hidden textarea and POST via hidden iframe (no CORS)
+      payloadEl.value = JSON.stringify(out);
       statusEl.textContent = 'Uploading…';
-
-      // Post JSON payload using fetch
-      const formData = new URLSearchParams();
-      formData.append('payload', JSON.stringify(out));
-
-      try {
-        const res = await fetch(WEB_APP_URL, { method: 'POST', body: formData });
-        const text = await res.text();
-        statusEl.innerHTML = "✅ Upload complete!";
-        console.log("Server response:", text);
-      } catch (err) {
-        statusEl.textContent = 'Error: ' + err;
-      }
+      postForm.submit();
     });
 
     function toB64(file) {
       return new Promise((resolve, reject) => {
         const r = new FileReader();
-        r.onload = () => resolve(String(r.result).split(',')[1]);
+        r.onload = () => {
+          const s = String(r.result);
+          resolve(s.split(',')[1]); // strip data:...;base64,
+        };
         r.onerror = reject;
         r.readAsDataURL(file);
       });
@@ -84,4 +101,3 @@
   </script>
 </body>
 </html>
-
